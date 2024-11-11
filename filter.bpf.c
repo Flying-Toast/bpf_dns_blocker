@@ -60,9 +60,9 @@ SEC("netfilter")
 int dnsfilter(struct bpf_nf_ctx *ctx) {
 	struct __sk_buff *skb = ctx->skb;
 
-	// if the packet is too short to be a UDP packet, it can't be a dns request; allow it
-	if (skb->data_end - skb->data < sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr))
-		return NF_ACCEPT;
+	// // if the packet is too short to be a UDP packet, it can't be a dns request; allow it
+	// if (skb->data_end - skb->data < sizeof(struct ethhdr) + sizeof(struct iphdr) + sizeof(struct udphdr))
+	// 	return NF_ACCEPT;
 
 	struct bpf_dynptr dptr;
 	bpf_dynptr_from_skb(skb, 0, &dptr);
@@ -70,9 +70,7 @@ int dnsfilter(struct bpf_nf_ctx *ctx) {
 	bpf_dynptr_read(&ip_header, sizeof(ip_header), &dptr, sizeof(eth_header), 0);
 	bpf_dynptr_read(&udp_header, sizeof(udp_header), &dptr, sizeof(eth_header) + sizeof(ip_header), 0);
 
-	// don't try to block the packet if it isn't UDP
-	if (ip_header.protocol != IPPROTO_UDP)
-		return NF_ACCEPT;
+	PRINTK("PORT IS: %d, __%d\n", (int)udp_header.dest, (int)__constant_ntohs(udp_header.dest));
 
 	bpf_for_each_map_elem(&blocklist, blocklist_iter_cb, NULL, 0);
 	if (should_drop)
