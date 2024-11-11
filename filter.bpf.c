@@ -34,7 +34,6 @@ struct {
 } blocklist SEC(".maps");
 
 static bool should_drop;
-static bool done;
 static struct ethhdr eth_header;
 static struct iphdr ip_header;
 static struct udphdr udp_header;
@@ -45,14 +44,11 @@ static uint64_t blocklist_iter_cb(
 	struct blocklist_item *val,
 	void *_arg
 ) {
-	if (done)
-		return 0;
-
 	//if (strcmp(val->host, state->) == 0)
 	//	state->should_block = true;
 
 	if (val->is_last)
-		done = true;
+		return 1;
 	return 0;
 }
 
