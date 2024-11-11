@@ -34,6 +34,15 @@ int main(void) {
 	if (map == NULL)
 		err(1, "bpf_object__find_map_by_name");
 
+	bpf_map__update_elem(
+		map,
+		&(uint32_t){0},
+		sizeof(uint32_t),
+		&(struct blocklist_item){.host = "example.com", .is_last = true},
+		sizeof(struct blocklist_item),
+		0
+	);
+
 	union bpf_attr attr = {};
 	attr.link_create.prog_fd = progfd;
 	attr.link_create.attach_type = BPF_NETFILTER;
@@ -45,7 +54,6 @@ int main(void) {
 		err(1, "BPF_LINK_CREATE");
 
 
-	for (;;) {
+	for (;;)
 		pause();
-	}
 }
