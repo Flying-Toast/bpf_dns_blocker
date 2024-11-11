@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include "shared.h"
 #include <bpf/libbpf.h>
 #include <err.h>
