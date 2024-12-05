@@ -10,6 +10,10 @@
 		bpf_trace_printk(__fmt, sizeof(__fmt), __VA_ARGS__); \
 	})
 
+#define ARRAY_LEN(ARR) (sizeof((ARR)) / sizeof((ARR)[0]))
+
+#define LABEL(STR) { .len = sizeof("" STR "") - 1, .str = "" STR "" }
+
 // ignore any names with more than this many labels (subdomains)
 #define MAXLABELS 10
 
@@ -44,12 +48,46 @@ struct dnshdr {
 	__u16 num_additional_rrs;
 } __attribute__((packed));
 
+struct label {
+	__u8 len;
+	__u8 str[255];
+};
+
 static struct ethhdr eth_header;
 static struct iphdr ip_header;
 static struct udphdr udp_header;
 static struct dnshdr dns_header;
 
+static const struct label blocklist[][MAXLABELS] = {
+	{ LABEL("ads"), LABEL("google"), LABEL("com") },
+};
+
 char LICENSE[] SEC("license") = "GPL";
+
+static bool memeq(void *va, void *vb, size_t n) {
+	char *a = va;
+	char *b = vb;
+	while (n--) {
+		if (a[n] != b[n])
+			return false;
+	}
+	return true;
+}
+
+static bool matches(struct label *xs, struct label *ys) {
+	for (__u8 i = 0; i < MAXLABELS; i++) {
+		if ((xs[i].len == 0) != (ys[i].len == 0))
+			return false;
+
+		if (xs[i].len != ys[i].len)
+			return false;
+
+		if (!memeq(xs[i].str, ys[i].str, xs[i].len))
+			return false;
+	}
+
+	return true;
+}
 
 SEC("xdp_dnsfilter")
 int dnsfilter(struct xdp_md *ctx) {
@@ -90,17 +128,14 @@ int dnsfilter(struct xdp_md *ctx) {
 	}
 
 	for (__u8 qi = 0; qi < nquestions; qi++) {
-		static struct {
-			__u8 len;
-			char str[255];
-		} labels[MAXLABELS];
+		static struct label labels[MAXLABELS];
 		for (int li = 0; li < MAXLABELS; li++) {
 			__u8 lablen;
 			bpf_dynptr_read(&lablen, sizeof(lablen), &dptr, offset, 0);
 			offset += sizeof(lablen);
 			labels[li].len = lablen;
 
-			// null label marks end
+			// null label marks end (see rfc883)
 			if (lablen == 0)
 				break;
 
@@ -112,10 +147,10 @@ int dnsfilter(struct xdp_md *ctx) {
 			}
 		}
 
-		for (__u8 li = 0; li < MAXLABELS; li++) {
-			if (labels[li].len == 0)
-				break;
-			PRINTK("", labels[li].len, labels[li].str);
+		for (__u8 blocklist_idx = 0; blocklist_idx < ARRAY_LEN(blocklist); blocklist_idx++) {
+			if (matches(blocklist[blocklist_idx], labels)) {
+				PRINTK("OVERWRITE THE ANSWER SECTION TO BLOCK%c\n", '!');
+			}
 		}
 	}
 
