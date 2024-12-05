@@ -2,6 +2,7 @@
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
+#include <linux/errno.h>
 #include <stdbool.h>
 
 #define PRINTK(FMT, ...) ({ \
@@ -20,7 +21,7 @@
 
 // see RFC 883 (https://www.rfc-editor.org/rfc/rfc883)
 struct dnshdr {
-	__u8 transaction_id;
+	__u16 transaction_id;
 
 	struct {
 		int qr : 1; // compare with QR_* macros
@@ -34,10 +35,10 @@ struct dnshdr {
 		int respcode : 4;
 	} __attribute__((packed)) flags;
 
-	__u8 num_questions;
-	__u8 num_answers;
-	__u8 num_authority_rrs;
-	__u8 num_additional_rrs;
+	__u16 num_questions;
+	__u16 num_answers;
+	__u16 num_authority_rrs;
+	__u16 num_additional_rrs;
 } __attribute__((packed));
 
 static struct ethhdr eth_header;
@@ -79,5 +80,31 @@ int dnsfilter(struct xdp_md *ctx) {
 	bpf_dynptr_read(&dns_header, sizeof(dns_header), &dptr, offset, 0);
 	offset += sizeof(dns_header);
 
-	return XDP_DROP;
+	PRINTK("num questions: %d\n", (int)dns_header.num_questions);
+
+	for (__u8 i = 0; i < dns_header.num_questions; i++) {
+		// only read a maximum of 10 labels, to please the BPF verifier
+		// (doesn't like infinite loops)
+		for (int j = 0; j < 10; j++) {
+			__u8 lablen;
+			bpf_dynptr_read(&lablen, sizeof(lablen), &dptr, offset, 0);
+			offset += sizeof(lablen);
+
+			// null label marks end
+			if (lablen == 0)
+				break;
+
+			__u8 label[256] = {0};
+			long err = bpf_dynptr_read(&label, lablen, &dptr, offset, 0);
+			offset += lablen;
+			if (err) {
+				PRINTK("err: %ld (E2BIG = %d, EINVAL = %d)\n", err, E2BIG, EINVAL);
+				return XDP_PASS;
+			}
+
+			PRINTK("Question label: ..%s..\n", label);
+		}
+	}
+
+	return XDP_PASS;
 }
