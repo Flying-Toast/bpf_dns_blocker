@@ -47,24 +47,6 @@ static struct dnshdr dns_header;
 
 char LICENSE[] SEC("license") = "GPL";
 
-static long parse(struct bpf_dynptr *dptr) {
-	__u32 offset = 0;
-
-	bpf_dynptr_read(&eth_header, sizeof(&eth_header), dptr, offset, 0);
-	offset += sizeof(eth_header);
-
-	bpf_dynptr_read(&ip_header, sizeof(ip_header), dptr, offset, 0);
-	offset += sizeof(ip_header);
-
-	bpf_dynptr_read(&udp_header, sizeof(udp_header), dptr, offset, 0);
-	offset += sizeof(udp_header);
-
-	bpf_dynptr_read(&dns_header, sizeof(dns_header), dptr, offset, 0);
-	offset += sizeof(dns_header);
-
-	return 0;
-}
-
 SEC("xdp_dnsfilter")
 int dnsfilter(struct xdp_md *ctx) {
 	// if too small to possibly be a DNS packet, allow it.
@@ -72,19 +54,30 @@ int dnsfilter(struct xdp_md *ctx) {
 		sizeof(eth_header)
 		+ sizeof(ip_header)
 		+ sizeof(udp_header)
-		+ sizeof(dns_header)
-		+ 000000000000000000 /* TODO: ADD MORE */)
+		+ sizeof(dns_header))
 	{
 		return XDP_PASS;
 	}
 
 	struct bpf_dynptr dptr;
 	bpf_dynptr_from_xdp(ctx, 0, &dptr);
+	__u32 offset = 0;
 
-	parse(&dptr);
+	bpf_dynptr_read(&eth_header, sizeof(&eth_header), &dptr, offset, 0);
+	offset += sizeof(eth_header);
 
+	bpf_dynptr_read(&ip_header, sizeof(ip_header), &dptr, offset, 0);
+	offset += sizeof(ip_header);
+	if (ip_header.protocol != 0x11)
+		return XDP_PASS; // not UDP
+
+	bpf_dynptr_read(&udp_header, sizeof(udp_header), &dptr, offset, 0);
+	offset += sizeof(udp_header);
 	if (__bpf_ntohs(udp_header.source) != 53)
-		return XDP_PASS;
+		return XDP_PASS; // not DNS
+
+	bpf_dynptr_read(&dns_header, sizeof(dns_header), &dptr, offset, 0);
+	offset += sizeof(dns_header);
 
 	return XDP_DROP;
 }
