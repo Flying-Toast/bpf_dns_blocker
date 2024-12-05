@@ -10,6 +10,9 @@
 		bpf_trace_printk(__fmt, sizeof(__fmt), __VA_ARGS__); \
 	})
 
+// ignore any names with more than this many labels (subdomains)
+#define MAXLABELS 10
+
 // DNS flag macros
 #define QR_QUERY 0
 #define QR_REPLY 1
@@ -80,27 +83,39 @@ int dnsfilter(struct xdp_md *ctx) {
 	bpf_dynptr_read(&dns_header, sizeof(dns_header), &dptr, offset, 0);
 	offset += sizeof(dns_header);
 
-	for (__u8 i = 0; i < (__u8)__bpf_ntohs(dns_header.num_questions); i++) {
-		// only read a maximum of 10 labels, to please the BPF verifier
-		// (doesn't like infinite loops)
-		for (int j = 0; j < 10; j++) {
+	__u16 nquestions = __bpf_ntohs(dns_header.num_questions);
+	if (nquestions > 255) {
+		PRINTK("Too many questions (%hu > 255)\n", nquestions);
+		return XDP_PASS;
+	}
+
+	for (__u8 qi = 0; qi < nquestions; qi++) {
+		static struct {
+			__u8 len;
+			char str[255];
+		} labels[MAXLABELS];
+		for (int li = 0; li < MAXLABELS; li++) {
 			__u8 lablen;
 			bpf_dynptr_read(&lablen, sizeof(lablen), &dptr, offset, 0);
 			offset += sizeof(lablen);
+			labels[li].len = lablen;
 
 			// null label marks end
 			if (lablen == 0)
 				break;
 
-			__u8 label[256] = {0};
-			long err = bpf_dynptr_read(&label, lablen, &dptr, offset, 0);
+			long err = bpf_dynptr_read(&labels[li].str, lablen, &dptr, offset, 0);
 			offset += lablen;
 			if (err) {
 				PRINTK("err: %ld (E2BIG = %d, EINVAL = %d)\n", err, E2BIG, EINVAL);
 				return XDP_PASS;
 			}
+		}
 
-			PRINTK("Question label: ..%s..\n", label);
+		for (__u8 li = 0; li < MAXLABELS; li++) {
+			if (labels[li].len == 0)
+				break;
+			PRINTK("", labels[li].len, labels[li].str);
 		}
 	}
 
