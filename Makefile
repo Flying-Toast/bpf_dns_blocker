@@ -8,7 +8,7 @@ vmlinux.h:
 
 .PHONY: load
 load: filter.o unload
-	xdp-loader load -m skb -s xdp_dnsfilter wlp0s20f3 filter.o
+	xdp-loader load -vv -m skb -s xdp_dnsfilter wlp0s20f3 filter.o
 
 .PHONY: unload
 unload:

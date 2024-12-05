@@ -80,9 +80,7 @@ int dnsfilter(struct xdp_md *ctx) {
 	bpf_dynptr_read(&dns_header, sizeof(dns_header), &dptr, offset, 0);
 	offset += sizeof(dns_header);
 
-	PRINTK("num questions: %d\n", (int)dns_header.num_questions);
-
-	for (__u8 i = 0; i < dns_header.num_questions; i++) {
+	for (__u8 i = 0; i < (__u8)__bpf_ntohs(dns_header.num_questions); i++) {
 		// only read a maximum of 10 labels, to please the BPF verifier
 		// (doesn't like infinite loops)
 		for (int j = 0; j < 10; j++) {
