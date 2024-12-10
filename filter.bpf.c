@@ -60,13 +60,18 @@ static struct dnshdr dns_header;
 
 static const struct label blocklist[][MAXLABELS] = {
 	{ LABEL("ads"), LABEL("google"), LABEL("com") },
+	{ LABEL("scamwebsite"), LABEL("com") },
+	// in reality these would be actually undesirable
+	// sites but I couldn't think of any more
+	{ LABEL("www"), LABEL("example"), LABEL("org") },
+	{ LABEL("docs"), LABEL("kernel"), LABEL("org") },
 };
 
 char LICENSE[] SEC("license") = "GPL";
 
-static bool memeq(void *va, void *vb, size_t n) {
-	char *a = va;
-	char *b = vb;
+static bool memeq(const void *va, const void *vb, size_t n) {
+	const char *a = va;
+	const char *b = vb;
 	while (n--) {
 		if (a[n] != b[n])
 			return false;
@@ -74,7 +79,7 @@ static bool memeq(void *va, void *vb, size_t n) {
 	return true;
 }
 
-static bool matches(struct label *xs, struct label *ys) {
+static bool matches(const struct label *xs, const struct label *ys) {
 	for (__u8 i = 0; i < MAXLABELS; i++) {
 		if ((xs[i].len == 0) != (ys[i].len == 0))
 			return false;
@@ -149,7 +154,9 @@ int dnsfilter(struct xdp_md *ctx) {
 
 		for (__u8 blocklist_idx = 0; blocklist_idx < ARRAY_LEN(blocklist); blocklist_idx++) {
 			if (matches(blocklist[blocklist_idx], labels)) {
-				PRINTK("OVERWRITE THE ANSWER SECTION TO BLOCK%c\n", '!');
+				// This is where we would overwrite the answer section
+				// to "block" the query...
+				PRINTK("Matched blocklist (index %d)", (int)blocklist_idx);
 			}
 		}
 	}
