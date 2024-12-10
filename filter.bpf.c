@@ -47,13 +47,6 @@ struct dnshdr {
 	__u16 num_additional_rrs;
 } __attribute__((packed));
 
-struct answer_tail {
-	__u16 type;
-	__u16 class;
-	__u16 ttl;
-	__u16 rdlength;
-} __attribute__((packed));
-
 struct label {
 	__u8 len;
 	__u8 str[255];
@@ -64,17 +57,15 @@ static struct iphdr ip_header;
 static struct udphdr udp_header;
 static struct dnshdr dns_header;
 
-static __u32 dnshdr_end;
-
 static const struct label blocklist[][MAXLABELS] = {
-	{ LABEL("login"), LABEL("case"), LABEL("edu") },
+	{ LABEL("ads"), LABEL("google"), LABEL("com") },
 };
 
 char LICENSE[] SEC("license") = "GPL";
 
-static bool memeq(const void *va, const void *vb, size_t n) {
-	const char *a = va;
-	const char *b = vb;
+static bool memeq(void *va, void *vb, size_t n) {
+	char *a = va;
+	char *b = vb;
 	while (n--) {
 		if (a[n] != b[n])
 			return false;
@@ -82,7 +73,7 @@ static bool memeq(const void *va, const void *vb, size_t n) {
 	return true;
 }
 
-static bool matches(const struct label *xs, const struct label *ys) {
+static bool matches(struct label *xs, struct label *ys) {
 	for (__u8 i = 0; i < MAXLABELS; i++) {
 		if ((xs[i].len == 0) != (ys[i].len == 0))
 			return false;
@@ -94,37 +85,6 @@ static bool matches(const struct label *xs, const struct label *ys) {
 			return false;
 	}
 
-	return true;
-}
-
-static bool shouldblock(const struct label *labs) {
-	for (__u8 blocklist_idx = 0; blocklist_idx < ARRAY_LEN(blocklist); blocklist_idx++) {
-		if (matches(blocklist[blocklist_idx], labs))
-			return true;
-	}
-	return false;
-}
-
-// returns true if there were > MAXLABELS labels
-static bool parselabels(struct bpf_dynptr *dptr, __u32 *offset, struct label *out_arr) {
-	for (int li = 0; li < MAXLABELS; li++) {
-		__u8 lablen = 123;
-		if (bpf_dynptr_read(&lablen, sizeof(lablen), dptr, *offset, 0))
-			PRINTK("SHIT", 1);
-		*offset += sizeof(lablen);
-		out_arr[li].len = lablen;
-
-		PRINTK("Lalblelelennn: %d\n", lablen);
-
-		// null label marks end (see rfc883)
-		if (lablen == 0)
-			return false;
-
-		bpf_dynptr_read(&out_arr[li].str, lablen, dptr, *offset, 0);
-		*offset += lablen;
-	}
-
-	// too many labels
 	return true;
 }
 
@@ -144,7 +104,7 @@ int dnsfilter(struct xdp_md *ctx) {
 	bpf_dynptr_from_xdp(ctx, 0, &dptr);
 	__u32 offset = 0;
 
-	bpf_dynptr_read(&eth_header, sizeof(eth_header), &dptr, offset, 0);
+	bpf_dynptr_read(&eth_header, sizeof(&eth_header), &dptr, offset, 0);
 	offset += sizeof(eth_header);
 
 	bpf_dynptr_read(&ip_header, sizeof(ip_header), &dptr, offset, 0);
@@ -159,44 +119,37 @@ int dnsfilter(struct xdp_md *ctx) {
 
 	bpf_dynptr_read(&dns_header, sizeof(dns_header), &dptr, offset, 0);
 	offset += sizeof(dns_header);
-	dnshdr_end = offset;
 
 	__u16 nquestions = __bpf_ntohs(dns_header.num_questions);
 	if (nquestions > 255) {
 		PRINTK("Too many questions (%hu > 255)\n", nquestions);
 		return XDP_PASS;
 	}
-	__u16 nanswers = __bpf_ntohs(dns_header.num_answers);
-	if (nanswers > 255) {
-		PRINTK("Too many answers (%hu > 255)\n", nanswers);
-		return XDP_PASS;
-	}
 
-	static struct label labelbuf[MAXLABELS];
-
-	// skip question section
 	for (__u8 qi = 0; qi < nquestions; qi++) {
-		if (parselabels(&dptr, &offset, labelbuf)) {
-			PRINTK("Too many question labels", 1);
-			return XDP_PASS;
+		static struct label labels[MAXLABELS];
+		for (int li = 0; li < MAXLABELS; li++) {
+			__u8 lablen;
+			bpf_dynptr_read(&lablen, sizeof(lablen), &dptr, offset, 0);
+			offset += sizeof(lablen);
+			labels[li].len = lablen;
+
+			// null label marks end (see rfc883)
+			if (lablen == 0)
+				break;
+
+			long err = bpf_dynptr_read(&labels[li].str, lablen, &dptr, offset, 0);
+			offset += lablen;
+			if (err) {
+				PRINTK("err: %ld (E2BIG = %d, EINVAL = %d)\n", err, E2BIG, EINVAL);
+				return XDP_PASS;
+			}
 		}
-		// skip QTYPE and QCLASS
-		offset += 4;
-	}
 
-	PRINTK("START ANSWERS (%d of them)", nanswers);
-	for (__u8 ai = 0; ai < nanswers; ai++) {
-		if (parselabels(&dptr, &offset, labelbuf)) {
-			PRINTK("Too many answer labels :(", 11);
-			return XDP_PASS;
-		}
-
-		struct answer_tail tail;
-		bpf_dynptr_read(&tail, sizeof(tail), &dptr, offset, 0);
-		offset += sizeof(tail) + __bpf_ntohs(tail.rdlength);
-
-		if (shouldblock(labelbuf)) {
-			PRINTK("OVERWRITE THE ANSWER SECTION TO BLOCK%c\n", '!');
+		for (__u8 blocklist_idx = 0; blocklist_idx < ARRAY_LEN(blocklist); blocklist_idx++) {
+			if (matches(blocklist[blocklist_idx], labels)) {
+				PRINTK("OVERWRITE THE ANSWER SECTION TO BLOCK%c\n", '!');
+			}
 		}
 	}
 
