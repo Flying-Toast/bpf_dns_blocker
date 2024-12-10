@@ -2,6 +2,7 @@
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
+#include <linux/errno.h>
 #include <stdbool.h>
 
 #define PRINTK(FMT, ...) ({ \
